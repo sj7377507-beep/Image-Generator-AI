@@ -1,27 +1,29 @@
 import streamlit as st
 import requests
+import urllib.parse
+import random
 import io
-import os
+import time
 from PIL import Image
 
 # ==========================================
-# IMAGE GENERATOR AI
+# IMAGE-GENERATOR-AI
+# Version 1.0
 # ==========================================
 
 st.set_page_config(
     page_title="Image Generator AI",
     page_icon="🎨",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# ==========================================
-# PAGE DESIGN
-# ==========================================
+# ---------------- CSS ----------------
 
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg, #10131f, #20283c);
+    background: linear-gradient(135deg, #101322, #20263b);
     color: white;
 }
 
@@ -29,365 +31,455 @@ h1, h2, h3, p, label {
     color: white !important;
 }
 
-.stButton > button {
+.hero {
+    padding: 28px;
+    border-radius: 20px;
+    text-align: center;
+    background: linear-gradient(120deg, #4530a8, #a33bb5);
+    margin-bottom: 24px;
+}
+
+.hero h1 {
+    font-size: 38px;
+    font-weight: 800;
+}
+
+.hero p {
+    font-size: 16px;
+}
+
+.stButton button {
     width: 100%;
-    border-radius: 12px;
     min-height: 45px;
+    border-radius: 12px;
     font-weight: bold;
 }
 
-div[data-testid="stFileUploader"] {
-    border: 1px dashed #7c8db5;
-    border-radius: 12px;
-    padding: 12px;
+.card {
+    padding: 18px;
+    border: 1px solid #414761;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.04);
+    margin-bottom: 14px;
 }
 
-.hero {
-    padding: 22px;
-    border-radius: 18px;
-    background: linear-gradient(120deg, #303b65, #5b347c);
-    margin-bottom: 20px;
-}
-
-.small-text {
-    color: #c9d2e8;
+footer {
+    visibility: hidden;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# HEADER
-# ==========================================
 
-st.markdown("""
-<div class="hero">
-    <h1>🎨 Image Generator AI</h1>
-    <p class="small-text">
-        Create images from prompts and edit your photos with AI.
-    </p>
-</div>
-""", unsafe_allow_html=True)
+# ---------------- SESSION STATE ----------------
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
-
-HF_TOKEN = os.getenv("HF_TOKEN", "").strip()
-
-# Select a model available to your Hugging Face account.
-DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
-
-API_URL = "https://router.huggingface.co/hf-inference/models/"
-
-# ==========================================
-# SESSION STATE
-# ==========================================
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 if "generated_image" not in st.session_state:
     st.session_state.generated_image = None
 
-if "image_history" not in st.session_state:
-    st.session_state.image_history = []
-
 if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = ""
 
-# ==========================================
-# AI IMAGE REQUEST
-# ==========================================
 
-def generate_image(prompt, uploaded_image=None):
-    if not HF_TOKEN:
-        st.error(
-            "HF_TOKEN is missing. Add your Hugging Face "
-            "access token to Streamlit Secrets."
-        )
-        return None
+# ---------------- HEADER ----------------
 
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "application/json"
-    }
+st.markdown("""
+<div class="hero">
+    <h1>🎨 Image Generator AI</h1>
+    <p>Create images from your imagination using text prompts.</p>
+    <p>Generate • Preview • Download</p>
+</div>
+""", unsafe_allow_html=True)
 
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "num_inference_steps": 4
-        }
-    }
 
-    # This request uses the text-to-image endpoint.
-    # Image editing needs a model/provider that explicitly
-    # supports image-to-image or instruction-based editing.
-    if uploaded_image is not None:
-        st.warning(
-            "This model request is text-to-image. "
-            "Uploading a photo here does not automatically edit it. "
-            "Connect an image-editing model to enable photo modification."
-        )
-
-    url = API_URL + DEFAULT_MODEL
-
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=180
-        )
-
-        if response.status_code != 200:
-            try:
-                details = response.json()
-            except ValueError:
-                details = response.text[:1000]
-
-            st.error(
-                f"Image service error ({response.status_code}): "
-                f"{details}"
-            )
-            return None
-
-        image = Image.open(io.BytesIO(response.content)).convert("RGB")
-        return image
-
-    except requests.exceptions.Timeout:
-        st.error("Request timed out. Please try again.")
-    except requests.exceptions.RequestException as exc:
-        st.error(f"Network error: {exc}")
-    except Exception as exc:
-        st.error(f"Could not process the generated image: {exc}")
-
-    return None
-
-# ==========================================
-# SIDEBAR
-# ==========================================
+# ---------------- SIDEBAR ----------------
 
 with st.sidebar:
     st.title("⚙️ Settings")
 
-    page = st.radio(
-        "Choose a tool",
+    image_size = st.selectbox(
+        "Image Size",
         [
-            "Text to Image",
-            "Image Editor",
-            "My Creations",
-            "About"
+            "512 × 512",
+            "768 × 768",
+            "1024 × 1024",
+            "1024 × 768",
+            "768 × 1024"
+        ],
+        index=1
+    )
+
+    quality = st.selectbox(
+        "Generation Style",
+        [
+            "Realistic Photography",
+            "Digital Art",
+            "Anime",
+            "Cinematic",
+            "Fantasy",
+            "3D Render"
         ]
+    )
+
+    number_of_images = st.selectbox(
+        "Number of Images",
+        [1, 2, 3, 4],
+        index=0
     )
 
     st.divider()
 
-    st.caption("Model")
-    st.code(DEFAULT_MODEL)
-
-    st.caption("AI service requires an available model and access.")
-
-# ==========================================
-# TEXT TO IMAGE
-# ==========================================
-
-if page == "Text to Image":
-
-    st.subheader("✨ Create an Image")
-
-    prompt = st.text_area(
-        "Describe the image you want",
-        placeholder=(
-            "Example: A realistic full-body portrait of a woman "
-            "wearing a red saree, standing in a beautiful garden, "
-            "natural light, detailed photography..."
-        ),
-        height=130,
-        key="text_prompt"
+    st.info(
+        "This app uses an external image-generation "
+        "service. Availability and speed depend on "
+        "that service."
     )
 
-    negative_prompt = st.text_input(
-        "Avoid (optional)",
-        placeholder="Example: blurry, low quality, distorted hands"
+    if st.button("🗑️ Clear Image History"):
+        st.session_state.history = []
+        st.session_state.generated_image = None
+        st.session_state.last_prompt = ""
+        st.rerun()
+
+
+# ---------------- PROMPT ----------------
+
+st.subheader("✨ Describe Your Image")
+
+prompt = st.text_area(
+    "Enter your prompt",
+    placeholder=(
+        "Example: A beautiful landscape with mountains, "
+        "a lake, golden sunset, realistic photography..."
+    ),
+    height=120,
+    key="prompt_input"
+)
+
+negative_prompt = st.text_input(
+    "Negative Prompt (Optional)",
+    placeholder="Example: blurry, low quality, distorted"
+)
+
+enhance_prompt = st.checkbox(
+    "Automatically enhance the prompt",
+    value=True
+)
+
+
+# ---------------- IMAGE SIZE ----------------
+
+width_height = {
+    "512 × 512": (512, 512),
+    "768 × 768": (768, 768),
+    "1024 × 1024": (1024, 1024),
+    "1024 × 768": (1024, 768),
+    "768 × 1024": (768, 1024)
+}
+
+width, height = width_height[image_size]
+
+
+# ---------------- GENERATION FUNCTION ----------------
+
+def generate_image(
+    user_prompt,
+    width,
+    height,
+    seed,
+    style,
+    negative_prompt
+):
+    """
+    Requests an image from a public image-generation
+    endpoint. This service is external to Streamlit.
+    """
+
+    final_prompt = user_prompt.strip()
+
+    if style != "Realistic Photography":
+        final_prompt += f", {style} style"
+
+    if negative_prompt.strip():
+        final_prompt += (
+            ", avoid: " + negative_prompt.strip()
+        )
+
+    prompt_encoded = urllib.parse.quote(
+        final_prompt,
+        safe=""
     )
 
-    aspect_ratio = st.selectbox(
-        "Image size",
-        ["512 × 512", "768 × 768", "1024 × 1024"]
+    url = (
+        f"https://image.pollinations.ai/prompt/"
+        f"{prompt_encoded}"
     )
 
-    generate_button = st.button(
-        "🚀 Generate Image",
-        type="primary"
+    params = {
+        "width": width,
+        "height": height,
+        "seed": seed,
+        "nologo": "true"
+    }
+
+    headers = {
+        "User-Agent": "Image-Generator-AI/1.0"
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        headers=headers,
+        timeout=(20, 240)
     )
 
-    if generate_button:
-        if not prompt.strip():
-            st.warning("Please enter an image description first.")
-        else:
-            final_prompt = prompt.strip()
+    response.raise_for_status()
 
-            if negative_prompt.strip():
-                final_prompt += (
-                    ". Avoid the following: "
-                    + negative_prompt.strip()
+    content_type = response.headers.get(
+        "Content-Type", ""
+    ).lower()
+
+    if "image" not in content_type:
+        raise ValueError(
+            "The service did not return an image. "
+            "Please try again later."
+        )
+
+    image = Image.open(
+        io.BytesIO(response.content)
+    ).convert("RGB")
+
+    return image
+
+
+# ---------------- GENERATE BUTTON ----------------
+
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    generate_clicked = st.button(
+        "🎨 Generate Image",
+        type="primary",
+        use_container_width=True
+    )
+
+with col2:
+    random_seed = st.button(
+        "🔄 New Seed",
+        use_container_width=True
+    )
+
+if random_seed:
+    st.session_state["current_seed"] = random.randint(
+        1, 2_000_000_000
+    )
+
+if "current_seed" not in st.session_state:
+    st.session_state["current_seed"] = random.randint(
+        1, 2_000_000_000
+    )
+
+
+# ---------------- RUN GENERATION ----------------
+
+if generate_clicked:
+
+    if not prompt.strip():
+        st.warning(
+            "Please enter a description before generating."
+        )
+
+    else:
+        current_seed = st.session_state["current_seed"]
+
+        final_prompt = prompt.strip()
+
+        if enhance_prompt:
+            final_prompt += (
+                ", highly detailed, good composition, "
+                "professional quality, beautiful lighting"
+            )
+
+        st.session_state.last_prompt = final_prompt
+
+        with st.spinner(
+            "🎨 Creating your image... Please wait."
+        ):
+            progress = st.progress(10)
+
+            try:
+                images = []
+
+                for index in range(number_of_images):
+
+                    progress.progress(
+                        int(10 + 80 * (index + 1)
+                            / number_of_images)
+                    )
+
+                    seed = current_seed + index
+
+                    image = generate_image(
+                        final_prompt,
+                        width,
+                        height,
+                        seed,
+                        quality,
+                        negative_prompt
+                    )
+
+                    images.append(image)
+
+                progress.progress(100)
+
+                st.session_state.generated_image = images
+
+                for image in images:
+                    st.session_state.history.append({
+                        "prompt": final_prompt,
+                        "image": image.copy(),
+                        "seed": current_seed
+                    })
+
+                st.success("Image generation completed!")
+
+            except requests.exceptions.Timeout:
+                st.error(
+                    "The image service took too long. "
+                    "Please try again."
                 )
 
-            with st.spinner("Generating your image..."):
-                result = generate_image(final_prompt)
+            except requests.exceptions.RequestException as e:
+                st.error(
+                    "The image service is unavailable "
+                    "or returned an error."
+                )
+                st.caption(str(e))
 
-            if result is not None:
-                st.session_state.generated_image = result
-                st.session_state.last_prompt = final_prompt
-                st.session_state.image_history.append({
-                    "prompt": final_prompt,
-                    "image": result.copy()
-                })
+            except Exception as e:
+                st.error("Unable to generate the image.")
+                st.caption(str(e))
 
-    if st.session_state.generated_image is not None:
-        st.divider()
-        st.subheader("🖼️ Your Generated Image")
 
-        st.image(
-            st.session_state.generated_image,
-            use_container_width=True
-        )
+# ---------------- DISPLAY IMAGE ----------------
 
-        image_bytes = io.BytesIO()
-        st.session_state.generated_image.save(
-            image_bytes,
-            format="PNG"
-        )
+if st.session_state.generated_image:
 
-        st.download_button(
-            "📥 Download PNG",
-            data=image_bytes.getvalue(),
-            file_name="image_generator_ai.png",
-            mime="image/png"
-        )
+    st.divider()
+    st.subheader("🖼️ Your Generated Images")
 
-        st.info(
-            "The size selector is currently an interface option; "
-            "the selected dimensions are not yet sent to the model."
-        )
+    images = st.session_state.generated_image
 
-# ==========================================
-# IMAGE EDITOR
-# ==========================================
-
-elif page == "Image Editor":
-
-    st.subheader("🖌️ AI Photo Editor")
-
-    st.write(
-        "Upload a photo and describe the changes you want. "
-        "This screen is prepared for an image-editing model."
+    columns = st.columns(
+        min(len(images), 2)
     )
 
-    uploaded_file = st.file_uploader(
-        "Upload your image",
-        type=["png", "jpg", "jpeg", "webp"]
-    )
+    for index, image in enumerate(images):
 
-    if uploaded_file:
-        try:
-            original = Image.open(uploaded_file).convert("RGB")
+        with columns[index % len(columns)]:
 
             st.image(
-                original,
-                caption="Original Image",
+                image,
+                caption=f"Generated Image {index + 1}",
                 use_container_width=True
             )
 
-            edit_prompt = st.text_area(
-                "What should be changed?",
-                placeholder=(
-                    "Example: Change the background to a beach. "
-                    "Keep the person's face and clothing unchanged."
+            buffer = io.BytesIO()
+
+            image.save(
+                buffer,
+                format="PNG"
+            )
+
+            st.download_button(
+                label="⬇️ Download PNG",
+                data=buffer.getvalue(),
+                file_name=(
+                    f"image_generator_{index + 1}.png"
                 ),
-                height=120
+                mime="image/png",
+                key=f"download_{index}_{len(images)}"
             )
 
-            st.warning(
-                "Photo editing is not connected yet. "
-                "A compatible image-editing model or provider is "
-                "required; a text-to-image model cannot guarantee "
-                "modifications to the uploaded photo."
-            )
 
-            if st.button("🖌️ Prepare Edit Request"):
-                if not edit_prompt.strip():
-                    st.warning("Please describe your requested changes.")
-                else:
-                    st.session_state["edit_prompt"] = edit_prompt
-                    st.session_state["original_upload"] = (
-                        uploaded_file.getvalue()
-                    )
-                    st.info(
-                        "Your edit request is ready. Connect a compatible "
-                        "image-editing model to generate the modified image."
-                    )
-
-        except Exception:
-            st.error("Could not open this image. Try another file.")
-
-# ==========================================
-# MY CREATIONS
-# ==========================================
-
-elif page == "My Creations":
-
-    st.subheader("📚 My Creations")
-
-    if not st.session_state.image_history:
-        st.info("Your generated images will appear here.")
-    else:
-        for index, item in enumerate(
-            reversed(st.session_state.image_history),
-            start=1
-        ):
-            with st.expander(f"Creation {index}"):
-                st.write(item["prompt"])
-                st.image(
-                    item["image"],
-                    use_container_width=True
-                )
-
-                buffer = io.BytesIO()
-                item["image"].save(buffer, format="PNG")
-
-                st.download_button(
-                    "Download Image",
-                    data=buffer.getvalue(),
-                    file_name=f"creation_{index}.png",
-                    mime="image/png",
-                    key=f"download_{index}"
-                )
-
-# ==========================================
-# ABOUT
-# ==========================================
-
-elif page == "About":
-
-    st.subheader("ℹ️ About Image Generator AI")
-
-    st.write("""
-    Image Generator AI is a Streamlit application for AI image creation.
-
-    Features:
-    - Text-to-image interface
-    - Prompt-based image generation
-    - Image preview and PNG download
-    - Creation history during the current session
-    - Image upload interface for a future editing integration
-
-    Image generation depends on model availability, account permissions,
-    service limits, and the configured Hugging Face token.
-
-    Uploaded images and creation history are not permanently saved
-    by this application.
-    """)
+# ---------------- IMAGE UPLOAD ----------------
 
 st.divider()
 
-st.caption(
-    "Image Generator AI | Built with Python and Streamlit"
+st.subheader("🖼️ Upload an Existing Image")
+
+uploaded_file = st.file_uploader(
+    "Choose a photo to preview",
+    type=["png", "jpg", "jpeg", "webp"]
+)
+
+if uploaded_file:
+
+    uploaded_image = Image.open(
+        uploaded_file
+    ).convert("RGB")
+
+    st.image(
+        uploaded_image,
+        caption="Uploaded Image",
+        use_container_width=True
+    )
+
+    st.info(
+        "Image-to-image AI editing will be added in "
+        "the next version. Uploading a photo here "
+        "does not yet apply AI modifications."
+    )
+
+    output_buffer = io.BytesIO()
+
+    uploaded_image.save(
+        output_buffer,
+        format="PNG"
+    )
+
+    st.download_button(
+        "⬇️ Download Uploaded Image",
+        data=output_buffer.getvalue(),
+        file_name="uploaded_image.png",
+        mime="image/png"
+    )
+
+
+# ---------------- HISTORY ----------------
+
+st.divider()
+st.subheader("🕘 Recent Generation History")
+
+if st.session_state.history:
+
+    for index, item in enumerate(
+        reversed(st.session_state.history[-5:])
+    ):
+        with st.expander(
+            f"Image {len(st.session_state.history) - index}"
+        ):
+            st.write("Prompt:", item["prompt"])
+            st.write("Seed:", item["seed"])
+
+            st.image(
+                item["image"],
+                use_container_width=True
+            )
+
+else:
+    st.caption(
+        "Your generated images will appear here."
+    )
+
+
+# ---------------- FOOTER ----------------
+
+st.divider()
+
+st.markdown(
+    "<center>🎨 Image-Generator-AI · Version 1.0"
+    "</center>",
+    unsafe_allow_html=True
 )
